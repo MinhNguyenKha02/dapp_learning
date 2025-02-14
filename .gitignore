@@ -19,3 +19,13 @@
 
 # Go workspace file
 go.work
+
+# Google Drive API
+client_secret*.json
+
+# Environment variables
+.env
+
+# IDE specific
+.idea/
+.vscode/
