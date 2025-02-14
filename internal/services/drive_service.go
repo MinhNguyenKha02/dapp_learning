@@ -88,23 +88,40 @@ func (d *DriveService) UploadFile(file *multipart.FileHeader) (string, error) {
 }
 
 func (d *DriveService) getOrCreateFolder(folderPath string) (string, error) {
-	// Split path into parts
-	parts := strings.Split(folderPath, "/")
+	// Split path into parts and clean empty parts
+	parts := make([]string, 0)
+	for _, part := range strings.Split(folderPath, "/") {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+
 	var currentFolderId string
+	var fullPath string
 
 	// Create each folder in path if it doesn't exist
 	for _, part := range parts {
-		query := fmt.Sprintf("name='%s' and mimeType='application/vnd.google-apps.folder'", part)
-		if currentFolderId != "" {
-			query += fmt.Sprintf(" and '%s' in parents", currentFolderId)
+		fullPath += "/" + part
+
+		// Search for existing folder with exact name match and correct parent
+		var query string
+		if currentFolderId == "" {
+			// Search in root
+			query = fmt.Sprintf("name='%s' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false", part)
+		} else {
+			// Search in current parent folder
+			query = fmt.Sprintf("name='%s' and mimeType='application/vnd.google-apps.folder' and '%s' in parents and trashed=false", part, currentFolderId)
 		}
 
-		folder, err := d.service.Files.List().Q(query).Do()
+		folder, err := d.service.Files.List().
+			Q(query).
+			Fields("files(id, name, parents)").
+			Do()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("error searching for folder %s: %v", fullPath, err)
 		}
 
-		// If folder exists, use it
+		// If folder exists and not in trash, use it
 		if len(folder.Files) > 0 {
 			currentFolderId = folder.Files[0].Id
 			continue
@@ -119,11 +136,18 @@ func (d *DriveService) getOrCreateFolder(folderPath string) (string, error) {
 			folderMetadata.Parents = []string{currentFolderId}
 		}
 
-		createdFolder, err := d.service.Files.Create(folderMetadata).Do()
+		createdFolder, err := d.service.Files.Create(folderMetadata).
+			Fields("id, name, parents").
+			Do()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("error creating folder %s: %v", fullPath, err)
 		}
+
 		currentFolderId = createdFolder.Id
+	}
+
+	if currentFolderId == "" {
+		return "", fmt.Errorf("failed to create or find folder structure: %s", folderPath)
 	}
 
 	return currentFolderId, nil
